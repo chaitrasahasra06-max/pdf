@@ -137,7 +137,13 @@ class EfficientPDFAnalyzer:
         k = min(top_k, index.ntotal)
         if k == 0: return []
         _, I = index.search(q_emb, k)
-        return [sentences[int(idx)] for idx in I[0] if idx != -1 and 0 <= idx < len(sentences)]
+
+        seen, results = set(), []
+        for idx in I[0]:
+            if idx != -1 and 0 <= idx < len(sentences) and idx not in seen:
+                results.append(sentences[int(idx)])
+                seen.add(idx)
+        return results
 
     def extractive_summary(self, doc_id: str, num_sentences: int = SUMMARY_SENTENCES) -> str:
         meta_path, _ = meta_paths(doc_id, self.store_dir)
@@ -146,9 +152,9 @@ class EfficientPDFAnalyzer:
             raise ValueError("Document not indexed")
         embeddings = batch_encode(self.model, sentences)
 
-        # Efficient summary: pick diverse sentences (avoid redundancy)
         centroid = np.mean(embeddings, axis=0, keepdims=True)
         faiss.normalize_L2(centroid)
+
         selected, used = [], set()
         for _ in range(min(num_sentences, len(sentences))):
             sims = embeddings @ centroid.T
@@ -158,6 +164,7 @@ class EfficientPDFAnalyzer:
             if idx in used: break
             used.add(idx)
             selected.append(sentences[idx])
+
         return " ".join(selected)
 
 # -------------------------
@@ -190,7 +197,4 @@ if "doc_id" in st.session_state:
     if st.button("Generate Summary"):
         try:
             summary_text = analyzer.extractive_summary(st.session_state["doc_id"], num_sentences=SUMMARY_SENTENCES)
-            st.write("### 📌 Extractive Summary")
-            st.write(summary_text)
-        except Exception as e:
-            st.error(f"Error generating summary: {e}")
+            st.write("
