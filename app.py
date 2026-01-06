@@ -81,9 +81,10 @@ def build_index(embeddings: np.ndarray, use_ivf: bool = False, nlist: int = DEFA
     except Exception:
         return faiss.IndexIDMap2(faiss.IndexFlatIP(dim))
 
+# ✅ FIXED FUNCTION
 def save_index(index: faiss.Index, path: str):
-    cpu_index = faiss.index_gpu_to_cpu(index) if USE_GPU else index
-    faiss.write_index(cpu_index, path)
+    # Always save the CPU index directly
+    faiss.write_index(index, path)
 
 def load_index(path: str) -> Optional[faiss.Index]:
     return faiss.read_index(path) if os.path.exists(path) else None
@@ -121,6 +122,7 @@ class EfficientPDFAnalyzer:
         ids = np.arange(len(sentences), dtype="int64")
         index.add_with_ids(embeddings, ids)
 
+        # Save CPU index
         save_index(base_index, idx_path)
         save_meta(meta_path, sentences, ids.tolist(), {"index_type": "IVF" if use_ivf else "Flat", "nlist": nlist, "nprobe": nprobe})
         return {"status": "indexed", "doc_id": doc_id, "count": len(sentences), "index_type": "IVF" if use_ivf else "Flat"}
