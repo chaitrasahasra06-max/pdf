@@ -7,7 +7,7 @@ from sentence_transformers import SentenceTransformer
 from PyPDF2 import PdfReader
 import re
 import streamlit as st
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 
 # -------------------------
 # Config
@@ -126,7 +126,7 @@ class EfficientPDFAnalyzer:
 
     def search(self, query: str, doc_id: str, top_k: int = 3) -> List[str]:
         meta_path, idx_path = meta_paths(doc_id, self.store_dir)
-        meta, sentences = load_meta(meta_path), load_meta(meta_path).get("sentences", [])
+        sentences = load_meta(meta_path).get("sentences", [])
         if not sentences:
             raise ValueError("Document not indexed")
         index = load_index(idx_path)
@@ -136,7 +136,7 @@ class EfficientPDFAnalyzer:
         q_emb = self.model.encode([query], convert_to_numpy=True, normalize_embeddings=True).astype("float32")
         k = min(top_k, index.ntotal)
         if k == 0: return []
-        D, I = index.search(q_emb, k)
+        _, I = index.search(q_emb, k)
         return [sentences[int(idx)] for idx in I[0] if idx != -1 and 0 <= idx < len(sentences)]
 
     def extractive_summary(self, doc_id: str, num_sentences: int = SUMMARY_SENTENCES) -> str:
@@ -146,11 +146,10 @@ class EfficientPDFAnalyzer:
             raise ValueError("Document not indexed")
         embeddings = batch_encode(self.model, sentences)
 
-        # Efficient summary: select diverse sentences using MMR-like approach
+        # Efficient summary: pick diverse sentences (avoid redundancy)
         centroid = np.mean(embeddings, axis=0, keepdims=True)
         faiss.normalize_L2(centroid)
-        selected = []
-        used = set()
+        selected, used = [], set()
         for _ in range(min(num_sentences, len(sentences))):
             sims = embeddings @ centroid.T
             for u in used:
@@ -194,4 +193,4 @@ if "doc_id" in st.session_state:
             st.write("### 📌 Extractive Summary")
             st.write(summary_text)
         except Exception as e:
-            st.error
+            st.error(f"Error generating summary: {e}")
