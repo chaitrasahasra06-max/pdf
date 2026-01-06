@@ -81,9 +81,7 @@ def build_index(embeddings: np.ndarray, use_ivf: bool = False, nlist: int = DEFA
     except Exception:
         return faiss.IndexIDMap2(faiss.IndexFlatIP(dim))
 
-# ✅ FIXED FUNCTION
 def save_index(index: faiss.Index, path: str):
-    # Always save the CPU index directly
     faiss.write_index(index, path)
 
 def load_index(path: str) -> Optional[faiss.Index]:
@@ -122,12 +120,11 @@ class EfficientPDFAnalyzer:
         ids = np.arange(len(sentences), dtype="int64")
         index.add_with_ids(embeddings, ids)
 
-        # Save CPU index
         save_index(base_index, idx_path)
         save_meta(meta_path, sentences, ids.tolist(), {"index_type": "IVF" if use_ivf else "Flat", "nlist": nlist, "nprobe": nprobe})
         return {"status": "indexed", "doc_id": doc_id, "count": len(sentences), "index_type": "IVF" if use_ivf else "Flat"}
 
-    def search(self, query: str, doc_id: str, top_k: int = 3) -> List[Tuple[int, float, str]]:
+    def search(self, query: str, doc_id: str, top_k: int = 3) -> List[str]:
         meta_path, idx_path = meta_paths(doc_id, self.store_dir)
         meta, sentences = load_meta(meta_path), load_meta(meta_path).get("sentences", [])
         if not sentences:
@@ -140,7 +137,7 @@ class EfficientPDFAnalyzer:
         k = min(top_k, index.ntotal)
         if k == 0: return []
         D, I = index.search(q_emb, k)
-        return [(int(idx), float(score), sentences[int(idx)]) for score, idx in zip(D[0], I[0]) if idx != -1 and 0 <= idx < len(sentences)]
+        return [sentences[int(idx)] for idx in I[0] if idx != -1 and 0 <= idx < len(sentences)]
 
     def extractive_summary(self, doc_id: str, num_sentences: int = SUMMARY_SENTENCES) -> str:
         meta_path, _ = meta_paths(doc_id, self.store_dir)
@@ -148,12 +145,21 @@ class EfficientPDFAnalyzer:
         if not sentences:
             raise ValueError("Document not indexed")
         embeddings = batch_encode(self.model, sentences)
+
+        # Efficient summary: select diverse sentences using MMR-like approach
         centroid = np.mean(embeddings, axis=0, keepdims=True)
         faiss.normalize_L2(centroid)
-        tmp = faiss.IndexFlatIP(embeddings.shape[1])
-        tmp.add(embeddings)
-        _, I = tmp.search(centroid, min(num_sentences, len(sentences)))
-        return " ".join(sentences[int(i)] for i in I[0])
+        selected = []
+        used = set()
+        for _ in range(min(num_sentences, len(sentences))):
+            sims = embeddings @ centroid.T
+            for u in used:
+                sims -= 0.5 * (embeddings @ embeddings[u].reshape(-1,1))
+            idx = int(np.argmax(sims))
+            if idx in used: break
+            used.add(idx)
+            selected.append(sentences[idx])
+        return " ".join(selected)
 
 # -------------------------
 # Streamlit App
@@ -177,8 +183,8 @@ if "doc_id" in st.session_state:
         try:
             results = analyzer.search(query, st.session_state["doc_id"], top_k=5)
             st.write("### 🔍 Search Results")
-            for idx, score, sentence in results:
-                st.write(f"- **Score:** {score:.4f} | **Sentence:** {sentence}")
+            for sentence in results:
+                st.write(f"- {sentence}")
         except Exception as e:
             st.error(f"Error during search: {e}")
 
@@ -188,4 +194,4 @@ if "doc_id" in st.session_state:
             st.write("### 📌 Extractive Summary")
             st.write(summary_text)
         except Exception as e:
-            st.error(f"Error generating summary: {e}")
+            st.error
